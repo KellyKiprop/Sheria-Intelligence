@@ -1,0 +1,38 @@
+# Virtual environment
+venv/
+
+# Environment variables (API keys live here — never commit this)
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# FAISS indexes (large binary files)
+*.index
+
+# Data files
+*.jsonl
+*.csv
+*.parquet
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# dbt
+pipeline/dbt/target/
+pipeline/dbt/logs/
+
+# Airflow
+pipeline/logs/
+pipeline/plugins/
+airflow.db
+airflow.cfg
+
+# Docker
+*.log
