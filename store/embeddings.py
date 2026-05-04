@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 EMBEDDING_MODEL = "models/gemini-embedding-001"
-EMBEDDING_DIMENSIONS = 768  # must match what we defined in chunk_embeddings table
-BATCH_SIZE = 20             # how many chunks to embed per API call batch
-RATE_LIMIT_DELAY = 1.0      # seconds between batches — respects Gemini free tier limits
+EMBEDDING_DIMENSIONS = 768
+BATCH_SIZE = 20
+RATE_LIMIT_DELAY = 1.0
 
 
 def get_db_connection():
@@ -35,11 +35,7 @@ def get_db_connection():
 def fetch_unembedded_chunks(conn) -> list[tuple]:
     """
     Fetches all chunks that don't yet have an embedding.
-
-    We use a LEFT JOIN to find chunks with no corresponding
-    row in chunk_embeddings. This makes the function idempotent —
-    safe to run multiple times without duplicating embeddings.
-    Idempotent means: running it twice gives the same result as running it once.
+    Idempotent — safe to run multiple times, picks up where it left off.
     """
     cur = conn.cursor()
     cur.execute("""
@@ -56,12 +52,8 @@ def fetch_unembedded_chunks(conn) -> list[tuple]:
 
 def embed_text(text: str) -> list[float]:
     """
-    Sends a single text to Gemini and returns a 768-dim vector.
-
-    task_type='retrieval_document' tells Gemini this text is a
-    document being indexed — as opposed to a query being searched.
-    This distinction matters: Gemini optimizes embeddings differently
-    for documents vs queries, improving retrieval accuracy.
+    Sends text to Gemini and returns a 768-dim vector.
+    task_type='retrieval_document' optimizes for document indexing.
     """
     result = genai.embed_content(
         model=EMBEDDING_MODEL,
@@ -73,7 +65,7 @@ def embed_text(text: str) -> list[float]:
 
 
 def save_embedding(conn, chunk_id: int, embedding: list[float]):
-    """Stores a single embedding vector linked to its chunk."""
+    """Stores a single embedding linked to its chunk."""
     cur = conn.cursor()
     cur.execute("""
         INSERT INTO chunk_embeddings (chunk_id, embedding)
@@ -86,13 +78,8 @@ def save_embedding(conn, chunk_id: int, embedding: list[float]):
 
 def embed_all_chunks() -> dict:
     """
-    Main embedding function.
-
-    Fetches all unembedded chunks, embeds them in batches,
-    and stores each vector in chunk_embeddings.
-
-    We process in batches and add a delay between batches
-    to stay within Gemini's free tier rate limits (1500 req/day).
+    Embeds all unembedded chunks in batches.
+    Picks up exactly where it left off if interrupted.
     """
     conn = get_db_connection()
     chunks = fetch_unembedded_chunks(conn)
@@ -103,35 +90,29 @@ def embed_all_chunks() -> dict:
         return {"embedded": 0, "failed": 0}
 
     total = len(chunks)
+    total_batches = (total + BATCH_SIZE - 1) // BATCH_SIZE
     logger.info(f"Found {total} chunks to embed")
-    logger.info(f"Estimated API calls: {total}")
-    logger.info(f"Processing in batches of {BATCH_SIZE}\n")
+    logger.info(f"Batches: {total_batches} × {BATCH_SIZE} chunks\n")
 
     results = {"embedded": 0, "failed": 0, "failed_ids": []}
 
     for i in range(0, total, BATCH_SIZE):
         batch = chunks[i:i + BATCH_SIZE]
         batch_num = (i // BATCH_SIZE) + 1
-        total_batches = (total + BATCH_SIZE - 1) // BATCH_SIZE
-
-        logger.info(f"Batch {batch_num}/{total_batches} — chunks {i+1} to {min(i+BATCH_SIZE, total)}")
 
         for chunk_id, content, domain in batch:
             try:
                 embedding = embed_text(content)
                 save_embedding(conn, chunk_id, embedding)
                 results["embedded"] += 1
-
             except Exception as e:
-                logger.error(f"  ❌ Failed chunk {chunk_id}: {e}")
+                logger.error(f"❌ Chunk {chunk_id} failed: {e}")
                 results["failed"] += 1
                 results["failed_ids"].append(chunk_id)
 
-        # Progress update every batch
         pct = (results["embedded"] / total) * 100
-        logger.info(f"  Progress: {results['embedded']}/{total} ({pct:.1f}%)")
+        logger.info(f"Batch {batch_num}/{total_batches} — {results['embedded']}/{total} ({pct:.1f}%)")
 
-        # Rate limit delay between batches
         if i + BATCH_SIZE < total:
             time.sleep(RATE_LIMIT_DELAY)
 
@@ -141,8 +122,9 @@ def embed_all_chunks() -> dict:
 
 if __name__ == "__main__":
     logger.info("=" * 60)
-    logger.info("Sheria Intelligence — Embeddings Pipeline")
-    logger.info("=" * 60)
+    logger.info("Sheria Intelligence — Embeddings Pipeline (Gemini)")
+    logger.info(f"Model: {EMBEDDING_MODEL} | Dims: {EMBEDDING_DIMENSIONS}")
+    logger.info("=" * 60 + "\n")
 
     results = embed_all_chunks()
 
