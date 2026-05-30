@@ -6,6 +6,8 @@ from datetime import datetime
 from dotenv import load_dotenv
 import psycopg2
 from kafka import KafkaConsumer
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 load_dotenv(dotenv_path="/home/kelly/Documents/sheria-intelligence/.env")
 
