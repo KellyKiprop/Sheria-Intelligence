@@ -2,7 +2,8 @@ import os
 import time
 import logging
 import psycopg2
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path="/home/kelly/Documents/sheria-intelligence/.env")
@@ -13,9 +14,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# New SDK: client instance instead of module-level configure()
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-EMBEDDING_MODEL = "models/gemini-embedding-001"
+EMBEDDING_MODEL = "gemini-embedding-001"   # no "models/" prefix with new SDK
 EMBEDDING_DIMENSIONS = 768
 BATCH_SIZE = 20
 RATE_LIMIT_DELAY = 1.0
@@ -53,15 +55,17 @@ def fetch_unembedded_chunks(conn) -> list[tuple]:
 def embed_text(text: str) -> list[float]:
     """
     Sends text to Gemini and returns a 768-dim vector.
-    task_type='retrieval_document' optimizes for document indexing.
+    task_type='RETRIEVAL_DOCUMENT' optimizes for document indexing.
     """
-    result = genai.embed_content(
+    result = client.models.embed_content(
         model=EMBEDDING_MODEL,
-        content=text,
-        task_type="retrieval_document",
-        output_dimensionality=EMBEDDING_DIMENSIONS
+        contents=text,
+        config=types.EmbedContentConfig(
+            task_type="RETRIEVAL_DOCUMENT",
+            output_dimensionality=EMBEDDING_DIMENSIONS
+        )
     )
-    return result["embedding"]
+    return result.embeddings[0].values
 
 
 def save_embedding(conn, chunk_id: int, embedding: list[float]):
@@ -104,9 +108,9 @@ def embed_all_chunks() -> dict:
             try:
                 embedding = embed_text(content)
                 save_embedding(conn, chunk_id, embedding)
-                results["embedded"] += 1
+                results["embedded"] += 1          # fixed: was duplicated twice
             except Exception as e:
-                logger.error(f"❌ Chunk {chunk_id} failed: {e}")
+                logger.error(f"Chunk {chunk_id} failed: {e}")
                 results["failed"] += 1
                 results["failed_ids"].append(chunk_id)
 
@@ -129,7 +133,7 @@ if __name__ == "__main__":
     results = embed_all_chunks()
 
     logger.info("\n" + "=" * 60)
-    logger.info("📊 Embedding Summary")
+    logger.info("Embedding Summary")
     logger.info("=" * 60)
     logger.info(f"   Chunks embedded: {results['embedded']}")
     logger.info(f"   Failed:          {results['failed']}")

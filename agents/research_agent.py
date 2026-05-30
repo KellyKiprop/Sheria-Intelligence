@@ -1,10 +1,10 @@
 import os
 import logging
 import psycopg2
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from typing import TypedDict, Optional
 from dotenv import load_dotenv
-from anthropic import Anthropic
 
 load_dotenv(dotenv_path="/home/kelly/Documents/sheria-intelligence/.env")
 
@@ -14,13 +14,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# ── Gemini Client ─────────────────────────────────────────────
+# New SDK uses a client instance instead of module-level configure()
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 # ── Shared State ─────────────────────────────────────────────
 # This TypedDict is the baton passed between all agents.
 # Every agent reads from it and writes its results back into it.
 # TypedDict means Python knows exactly what keys and types to expect.
-
 class SheriaState(TypedDict):
     query: str                          # original user question
     domain: Optional[str]              # detected legal domain
@@ -31,9 +32,7 @@ class SheriaState(TypedDict):
     response: Optional[str]           # final answer (Drafting fills)
     needs_retry: bool                  # Citation sets True if claims fail
 
-
 # ── Retrieval ────────────────────────────────────────────────
-
 def get_db_connection():
     return psycopg2.connect(
         host=os.getenv("DB_HOST"),
@@ -44,35 +43,32 @@ def get_db_connection():
         sslmode="require"
     )
 
-
 def embed_query(query: str) -> list[float]:
     """
     Embeds the user query using Gemini.
-
-    Note: task_type='retrieval_query' — different from 'retrieval_document'
+    Note: task_type='RETRIEVAL_QUERY' — different from 'RETRIEVAL_DOCUMENT'
     used when indexing. Gemini optimizes query embeddings differently
     from document embeddings to improve retrieval accuracy.
     This asymmetric embedding is why our retrieval will be more precise
     than naive approaches that embed queries and documents the same way.
     """
-    result = genai.embed_content(
-        model="models/gemini-embedding-001",
-        content=query,
-        task_type="retrieval_query",
-        output_dimensionality=768
+    result = client.models.embed_content(
+        model="gemini-embedding-001",
+        contents=query,
+        config=types.EmbedContentConfig(
+            task_type="RETRIEVAL_QUERY",
+            output_dimensionality=768
+        )
     )
-    return result["embedding"]
-
+    return result.embeddings[0].values
 
 def detect_domain(query: str) -> Optional[str]:
     """
     Detects which legal domain a query belongs to.
-
     This is a simple keyword-based classifier.
     In a future version this could be a proper ML classifier
     or an LLM call — but keyword matching is fast, free,
     and accurate enough for our three domains.
-
     Returning None means the query spans multiple domains
     and we search across everything.
     """
@@ -83,13 +79,11 @@ def detect_domain(query: str) -> Optional[str]:
         "leave", "maternity", "redundancy", "dismiss", "resign", "notice",
         "worker", "employee", "employer", "labour", "union", "strike"
     ]
-
     land_keywords = [
         "land", "property", "title deed", "plot", "lease", "tenant",
         "landlord", "evict", "ownership", "survey", "cadastral", "acre",
         "hectare", "caution", "adverse possession", "compulsory acquisition"
     ]
-
     business_keywords = [
         "company", "business", "director", "shareholder", "register",
         "incorporation", "contract", "liability", "partnership", "shares",
@@ -115,7 +109,6 @@ def detect_domain(query: str) -> Optional[str]:
 
     return best_domain
 
-
 def retrieve_chunks(
     query_embedding: list[float],
     domain: Optional[str],
@@ -123,15 +116,12 @@ def retrieve_chunks(
 ) -> list[dict]:
     """
     Retrieves the most semantically similar chunks from pgvector.
-
     Why top_k=8?
     Too few (3-4) and we might miss relevant provisions.
     Too many (15+) and we flood the LLM with noise, hurting analysis quality.
     8 is the sweet spot for legal queries — enough coverage, tight enough focus.
-
     The cosine distance operator <=> finds vectors closest in direction
     regardless of magnitude — ideal for semantic similarity.
-
     If a domain is detected we filter to that domain first,
     then fall back to all domains if fewer than 3 results come back.
     """
@@ -211,20 +201,16 @@ def retrieve_chunks(
 
     return chunks
 
-
 # ── Research Agent Node ───────────────────────────────────────
-
 def research_agent(state: SheriaState) -> SheriaState:
     """
     Research Agent — Node 1 in the LangGraph pipeline.
-
     Responsibilities:
     1. Detect which legal domain the query belongs to
     2. Embed the query using Gemini
     3. Retrieve the top 8 most relevant chunks from pgvector
     4. Log what was found and how confident we are
     5. Return updated state with chunks filled in
-
     This agent never calls the LLM — it's purely retrieval.
     Keeping retrieval and reasoning in separate agents means
     we can tune, test, and improve each independently.
@@ -248,13 +234,11 @@ def research_agent(state: SheriaState) -> SheriaState:
     if chunks:
         top_similarity = chunks[0]["similarity"]
         logger.info(f"Top similarity score: {top_similarity}")
-
         if top_similarity < 0.6:
             logger.warning(
                 f"Low similarity ({top_similarity}) — query may be outside "
                 f"current knowledge base"
             )
-
         for i, chunk in enumerate(chunks[:3], 1):
             logger.info(
                 f"  Result {i}: {chunk['title']} "
@@ -268,9 +252,7 @@ def research_agent(state: SheriaState) -> SheriaState:
         "chunks": chunks
     }
 
-
 # ── Standalone Test ───────────────────────────────────────────
-
 if __name__ == "__main__":
     test_queries = [
         {

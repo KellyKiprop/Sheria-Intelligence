@@ -1,0 +1,15 @@
+kafka-python
+psycopg2-binary
+requests
+beautifulsoup4
+lxml
+google-generativeai
+google-genai
+groq
+langgraph
+langchain
+langchain-anthropic
+langchain-community
+pgvector
+sqlalchemy
+python-dotenv
