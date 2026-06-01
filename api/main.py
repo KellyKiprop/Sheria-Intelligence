@@ -122,6 +122,68 @@ def log_query(query: str, user_tier: str, response_time_ms: int, chunks_retrieve
         logger.error(f"Failed to log query: {e}")
 
 
+# ── Cache helpers ─────────────────────────────────────────────
+def get_cache_key(query: str, user_tier: str) -> str:
+    normalized = f"{query.strip().lower()}:{user_tier}"
+    return hashlib.md5(normalized.encode()).hexdigest()
+
+
+def get_cached_response(cache_key: str) -> Optional[dict]:
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT response, citations, domain, chunks_retrieved
+            FROM query_cache
+            WHERE cache_key = %s AND expires_at > NOW()
+        """, (cache_key,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row:
+            return {
+                "response": row[0],
+                "citations": row[1],
+                "domain": row[2],
+                "chunks_retrieved": row[3]
+            }
+        return None
+    except Exception as e:
+        logger.error(f"Cache read error: {e}")
+        return None
+
+
+def save_to_cache(cache_key: str, query: str, user_tier: str, result: dict):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO query_cache (cache_key, query, user_tier, response, citations, domain, chunks_retrieved)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (cache_key) DO UPDATE SET
+                response = EXCLUDED.response,
+                citations = EXCLUDED.citations,
+                domain = EXCLUDED.domain,
+                chunks_retrieved = EXCLUDED.chunks_retrieved,
+                created_at = NOW(),
+                expires_at = NOW() + INTERVAL '24 hours'
+        """, (
+            cache_key,
+            query,
+            user_tier,
+            result.get("response", ""),
+            json.dumps(result.get("citations", [])),
+            result.get("domain"),
+            len(result.get("chunks", []))
+        ))
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info(f"Response cached with key: {cache_key[:8]}...")
+    except Exception as e:
+        logger.error(f"Cache save error: {e}")
+
+
 # ── Routes ────────────────────────────────────────────────────
 @app.get("/", include_in_schema=False)
 def root():
@@ -225,6 +287,36 @@ def query_legal(request: QueryRequest):
             detail="user_tier must be 'public' or 'professional'"
         )
 
+    # Check cache first
+    cache_key = get_cache_key(request.query, request.user_tier)
+    cached = get_cached_response(cache_key)
+
+    if cached:
+        logger.info(f"Cache HIT for key: {cache_key[:8]}...")
+        citations = []
+        if cached["citations"]:
+            raw = cached["citations"] if isinstance(cached["citations"], list) else json.loads(cached["citations"])
+            citations = [
+                CitationResponse(
+                    title=c["title"],
+                    domain=c["domain"],
+                    source_url=c["source_url"],
+                    similarity=c["similarity"]
+                )
+                for c in raw
+            ]
+        return QueryResponse(
+            query=request.query,
+            response=cached["response"],
+            citations=citations,
+            domain=cached["domain"],
+            chunks_retrieved=cached["chunks_retrieved"],
+            retries=0,
+            response_time_ms=0,
+            user_tier=request.user_tier
+        )
+
+    logger.info("Cache MISS — running pipeline")
     start_time = time.time()
 
     try:
@@ -250,13 +342,8 @@ def query_legal(request: QueryRequest):
 
         logger.info(f"Query completed in {response_time_ms}ms")
 
-    # Save to cache
-    try:
-        conn = get_db_connection()
-        save_to_cache(conn, cache_key, request.query, request.user_tier, final_state)
-        conn.close()
-    except Exception as e:
-        logger.error(f"Cache save error: {e}")
+        # Save to cache
+        save_to_cache(cache_key, request.query, request.user_tier, result)
 
         return QueryResponse(
             query=request.query,
