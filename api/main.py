@@ -2,20 +2,17 @@ import os
 import time
 import logging
 import psycopg2
-from fastapi import FastAPI, HTTPException, Request
+import sys
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 from dotenv import load_dotenv
-import sys
-
-# Add agents directory to path so we can import the pipeline
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'agents'))
-
-from pipeline import run_pipeline
 
 load_dotenv(dotenv_path="/home/kelly/Documents/sheria-intelligence/.env")
+
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'agents'))
+from pipeline import run_pipeline
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,7 +20,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ── App setup ─────────────────────────────────────────────────
+# ── App ───────────────────────────────────────────────────────
 app = FastAPI(
     title="Sheria Intelligence API",
     description="AI-powered Kenyan legal intelligence platform",
@@ -32,7 +29,6 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# CORS — allows the API to be called from a browser frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -41,9 +37,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# ── Request / Response models ─────────────────────────────────
-
+# ── Models ────────────────────────────────────────────────────
 class QueryRequest(BaseModel):
     query: str = Field(
         ...,
@@ -54,7 +48,7 @@ class QueryRequest(BaseModel):
     )
     user_tier: str = Field(
         default="public",
-        description="User tier: 'public' for plain language, 'professional' for legal brief",
+        description="'public' for plain language, 'professional' for legal brief",
         example="public"
     )
 
@@ -99,8 +93,7 @@ class StatsResponse(BaseModel):
     total_queries: int
 
 
-# ── Database helper ───────────────────────────────────────────
-
+# ── DB helpers ────────────────────────────────────────────────
 def get_db_connection():
     return psycopg2.connect(
         host=os.getenv("DB_HOST"),
@@ -112,22 +105,12 @@ def get_db_connection():
     )
 
 
-def log_query(
-    query: str,
-    user_tier: str,
-    response_time_ms: int,
-    chunks_retrieved: int
-):
-    """
-    Logs every query to the query_logs table.
-    This feeds the Grafana dashboard with real usage data.
-    """
+def log_query(query: str, user_tier: str, response_time_ms: int, chunks_retrieved: int):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO query_logs
-            (query, user_tier, response_time_ms, chunks_retrieved)
+            INSERT INTO query_logs (query, user_tier, response_time_ms, chunks_retrieved)
             VALUES (%s, %s, %s, %s);
         """, (query, user_tier, response_time_ms, chunks_retrieved))
         conn.commit()
@@ -138,7 +121,6 @@ def log_query(
 
 
 # ── Routes ────────────────────────────────────────────────────
-
 @app.get("/", include_in_schema=False)
 def root():
     return {
@@ -151,11 +133,6 @@ def root():
 
 @app.get("/health", response_model=HealthResponse)
 def health_check():
-    """
-    Health check endpoint.
-    Verifies the API is running and can reach the database.
-    Used by monitoring systems and load balancers.
-    """
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -176,10 +153,6 @@ def health_check():
 
 @app.get("/stats", response_model=StatsResponse)
 def get_stats():
-    """
-    Returns knowledge base statistics.
-    Shows how many documents, chunks, and embeddings are indexed.
-    """
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -193,11 +166,7 @@ def get_stats():
         cur.execute("SELECT COUNT(*) FROM chunk_embeddings;")
         total_embeddings = cur.fetchone()[0]
 
-        cur.execute("""
-            SELECT domain, COUNT(*) as chunk_count
-            FROM document_chunks
-            GROUP BY domain;
-        """)
+        cur.execute("SELECT domain, COUNT(*) FROM document_chunks GROUP BY domain;")
         domains = {row[0]: row[1] for row in cur.fetchall()}
 
         cur.execute("SELECT COUNT(*) FROM query_logs;")
@@ -213,84 +182,13 @@ def get_stats():
             domains=domains,
             total_queries=total_queries
         )
-
     except Exception as e:
         logger.error(f"Stats query failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve stats")
 
 
-@app.post("/query", response_model=QueryResponse)
-def query_legal(request: QueryRequest):
-    """
-    Main query endpoint — the heart of the API.
-
-    Accepts a legal question and user tier, runs the full
-    4-agent LangGraph pipeline, and returns a structured response
-    with citations and metadata.
-
-    Public tier: plain language answer
-    Professional tier: formatted legal brief
-    """
-    logger.info(f"Query received: '{request.query}' [{request.user_tier}]")
-
-    # Validate user tier
-    if request.user_tier not in ["public", "professional"]:
-        raise HTTPException(
-            status_code=400,
-            detail="user_tier must be 'public' or 'professional'"
-        )
-
-    start_time = time.time()
-
-    try:
-        # Run the full pipeline
-        result = run_pipeline(request.query, request.user_tier)
-        response_time_ms = int((time.time() - start_time) * 1000)
-
-        # Format citations for response
-        citations = [
-            CitationResponse(
-                title=c["title"],
-                domain=c["domain"],
-                source_url=c["source_url"],
-                similarity=c["similarity"]
-            )
-            for c in (result.get("citations") or [])
-        ]
-
-        # Log to database for monitoring
-        log_query(
-            query=request.query,
-            user_tier=request.user_tier,
-            response_time_ms=response_time_ms,
-            chunks_retrieved=len(result.get("chunks", []))
-        )
-
-        logger.info(f"Query completed in {response_time_ms}ms")
-
-        return QueryResponse(
-            query=request.query,
-            response=result["response"],
-            citations=citations,
-            domain=result.get("domain"),
-            chunks_retrieved=len(result.get("chunks", [])),
-            retries=result.get("retry_count", 0),
-            response_time_ms=response_time_ms,
-            user_tier=request.user_tier
-        )
-
-    except Exception as e:
-        response_time_ms = int((time.time() - start_time) * 1000)
-        logger.error(f"Pipeline error: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Pipeline error: {str(e)}"
-        )
-
-
 @app.get("/domains")
 def get_domains():
-    """Returns the legal domains currently indexed in the knowledge base."""
     return {
         "domains": [
             {
@@ -314,3 +212,54 @@ def get_domains():
         ]
     }
 
+
+@app.post("/query", response_model=QueryResponse)
+def query_legal(request: QueryRequest):
+    logger.info(f"Query received: '{request.query}' [{request.user_tier}]")
+
+    if request.user_tier not in ["public", "professional"]:
+        raise HTTPException(
+            status_code=400,
+            detail="user_tier must be 'public' or 'professional'"
+        )
+
+    start_time = time.time()
+
+    try:
+        result = run_pipeline(request.query, request.user_tier)
+        response_time_ms = int((time.time() - start_time) * 1000)
+
+        citations = [
+            CitationResponse(
+                title=c["title"],
+                domain=c["domain"],
+                source_url=c["source_url"],
+                similarity=c["similarity"]
+            )
+            for c in (result.get("citations") or [])
+        ]
+
+        log_query(
+            query=request.query,
+            user_tier=request.user_tier,
+            response_time_ms=response_time_ms,
+            chunks_retrieved=len(result.get("chunks", []))
+        )
+
+        logger.info(f"Query completed in {response_time_ms}ms")
+
+        return QueryResponse(
+            query=request.query,
+            response=result["response"],
+            citations=citations,
+            domain=result.get("domain"),
+            chunks_retrieved=len(result.get("chunks", [])),
+            retries=result.get("retry_count", 0),
+            response_time_ms=response_time_ms,
+            user_tier=request.user_tier
+        )
+
+    except Exception as e:
+        response_time_ms = int((time.time() - start_time) * 1000)
+        logger.error(f"Pipeline error: {e}")
+        raise HTTPException(status_code=500, detail=f"Pipeline error: {str(e)}")
