@@ -134,6 +134,10 @@ def retrieve_chunks(
     conn = get_db_connection()
     cur = conn.cursor()
 
+    # Set ivfflat probes — searches more lists for better recall
+    # Default is 1 which misses most results; 10 gives good accuracy
+    cur.execute("SET ivfflat.probes = 10")
+
     if domain:
         cur.execute("""
             SELECT
