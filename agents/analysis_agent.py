@@ -12,7 +12,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+_groq_client = None
+
+def get_groq_client():
+    global _groq_client
+    if _groq_client is None:
+        _groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    return _groq_client
 LLM_MODEL = "llama-3.3-70b-versatile"
 
 def format_chunks_for_prompt(chunks: list[dict]) -> str:
@@ -120,7 +126,7 @@ def analysis_agent(state: SheriaState) -> SheriaState:
 
     logger.info(f"Calling {LLM_MODEL} for legal analysis...")
 
-    response = client.chat.completions.create(
+    response = get_groq_client().chat.completions.create(
     	model=LLM_MODEL,
     	messages=[{"role": "user", "content": prompt}],
     	temperature=0.1,

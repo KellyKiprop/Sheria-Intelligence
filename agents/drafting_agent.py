@@ -12,7 +12,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+_groq_client = None
+
+def get_groq_client():
+    global _groq_client
+    if _groq_client is None:
+        _groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    return _groq_client
 LLM_MODEL = "llama-3.3-70b-versatile"
 
 
@@ -145,7 +151,7 @@ def drafting_agent(state: SheriaState) -> SheriaState:
     citations_text = format_citations_for_response(citations)
     prompt = build_drafting_prompt(query, analysis, citations_text, user_tier)
 
-    response = client.chat.completions.create(
+    response = get_groq_client().chat.completions.create(
         model=LLM_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,    # slightly higher than analysis — we want readable prose

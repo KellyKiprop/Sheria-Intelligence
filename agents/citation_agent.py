@@ -12,7 +12,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+_groq_client = None
+
+def get_groq_client():
+    global _groq_client
+    if _groq_client is None:
+        _groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    return _groq_client
 LLM_MODEL = "llama-3.3-70b-versatile"
 
 
@@ -173,7 +179,7 @@ def citation_agent(state: SheriaState) -> SheriaState:
     # Step 1: Verify claims
     prompt = build_citation_prompt(analysis, chunks)
 
-    response = client.chat.completions.create(
+    response = get_groq_client().chat.completions.create(
         model=LLM_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.0,    # zero temperature — we want deterministic verification
