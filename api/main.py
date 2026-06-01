@@ -142,7 +142,7 @@ def health_check():
         db_status = "connected"
     except Exception as e:
         logger.error(f"Database health check failed: {e}")
-        db_status = "disconnected"
+        db_status = f"disconnected: {str(e)}"
 
     return HealthResponse(
         status="ok" if db_status == "connected" else "degraded",
