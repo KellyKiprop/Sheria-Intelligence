@@ -1,4 +1,6 @@
 import os
+import hashlib
+import json
 import time
 import logging
 import psycopg2
@@ -247,6 +249,14 @@ def query_legal(request: QueryRequest):
         )
 
         logger.info(f"Query completed in {response_time_ms}ms")
+
+    # Save to cache
+    try:
+        conn = get_db_connection()
+        save_to_cache(conn, cache_key, request.query, request.user_tier, final_state)
+        conn.close()
+    except Exception as e:
+        logger.error(f"Cache save error: {e}")
 
         return QueryResponse(
             query=request.query,
