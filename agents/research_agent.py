@@ -16,7 +16,13 @@ logger = logging.getLogger(__name__)
 
 # ── Gemini Client ─────────────────────────────────────────────
 # New SDK uses a client instance instead of module-level configure()
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+_client = None
+
+def get_genai_client():
+    global _client
+    if _client is None:
+        _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    return _client
 
 # ── Shared State ─────────────────────────────────────────────
 # This TypedDict is the baton passed between all agents.
@@ -52,7 +58,7 @@ def embed_query(query: str) -> list[float]:
     This asymmetric embedding is why our retrieval will be more precise
     than naive approaches that embed queries and documents the same way.
     """
-    result = client.models.embed_content(
+    result = get_genai_client().models.embed_content(
         model="gemini-embedding-001",
         contents=query,
         config=types.EmbedContentConfig(
