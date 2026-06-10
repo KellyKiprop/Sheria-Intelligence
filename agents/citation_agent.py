@@ -103,7 +103,7 @@ def build_citations_list(chunks: list[dict]) -> list[dict]:
                 "source_number": i,
                 "title": title,
                 "domain": chunk["domain"],
-                "source_url": chunk["source_url"],
+                "source_url": chunk.get("source_url") or "",
                 "similarity": chunk["similarity"]
             })
             seen_titles.add(title)

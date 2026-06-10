@@ -66,7 +66,7 @@ class QueryRequest(BaseModel):
 class CitationResponse(BaseModel):
     title: str
     domain: str
-    source_url: str
+    source_url: Optional[str] = None
     similarity: float
 
 
