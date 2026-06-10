@@ -96,14 +96,24 @@ def detect_domain(query: str) -> Optional[str]:
         "dividend", "memorandum", "articles", "debenture", "liquidation"
     ]
 
+    cybercrime_keywords = [
+        "cyber", "cybercrime", "hacking", "hack", "computer", "internet",
+        "online", "digital", "data", "password", "phishing", "malware",
+        "ransomware", "identity theft", "electronic", "network", "device",
+        "social media", "email", "fraud", "scam", "unauthorized access",
+        "privacy", "surveillance", "cyberbullying", "harassment online"
+    ]
+
     employment_score = sum(1 for k in employment_keywords if k in query_lower)
     land_score = sum(1 for k in land_keywords if k in query_lower)
+    cybercrime_score = sum(1 for k in cybercrime_keywords if k in query_lower)
     business_score = sum(1 for k in business_keywords if k in query_lower)
 
     scores = {
         "employment": employment_score,
         "land": land_score,
-        "business": business_score
+        "business": business_score,
+        "cybercrime": cybercrime_score
     }
 
     best_domain = max(scores, key=scores.get)
