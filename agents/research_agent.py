@@ -93,7 +93,10 @@ def detect_domain(query: str) -> Optional[str]:
     business_keywords = [
         "company", "business", "director", "shareholder", "register",
         "incorporation", "contract", "liability", "partnership", "shares",
-        "dividend", "memorandum", "articles", "debenture", "liquidation"
+        "dividend", "memorandum", "articles", "debenture", "liquidation",
+        "counterfeit", "counterfeiting", "trademark", "fake goods",
+        "intellectual property", "genuine goods", "imitation", "piracy",
+        "anti-counterfeit", "brand protection"
     ]
 
     cybercrime_keywords = [
@@ -103,17 +106,29 @@ def detect_domain(query: str) -> Optional[str]:
         "social media", "email", "fraud", "scam", "unauthorized access",
         "privacy", "surveillance", "cyberbullying", "harassment online"
     ]
+    criminal_keywords = [
+        "crime", "criminal", "offence", "offense", "theft", "steal", "stolen",
+        "assault", "murder", "manslaughter", "robbery", "burglary", "rape",
+        "defilement", "kidnap", "abduct", "arson", "arrest", "bail",
+        "prosecution", "convict", "conviction", "sentence", "imprisonment",
+        "felony", "misdemeanour", "misdemeanor", "homicide",
+        "treason", "sedition", "perjury", "bribery", "corruption charge",
+        "self defence", "self-defence", "accomplice", "conspiracy", "weapon",
+        "penal code", "penalty", "jail", "prison"
+    ]
 
     employment_score = sum(1 for k in employment_keywords if k in query_lower)
     land_score = sum(1 for k in land_keywords if k in query_lower)
     cybercrime_score = sum(1 for k in cybercrime_keywords if k in query_lower)
     business_score = sum(1 for k in business_keywords if k in query_lower)
+    criminal_score = sum(1 for k in criminal_keywords if k in query_lower)
 
     scores = {
         "employment": employment_score,
         "land": land_score,
         "business": business_score,
-        "cybercrime": cybercrime_score
+        "cybercrime": cybercrime_score,
+        "criminal": criminal_score
     }
 
     best_domain = max(scores, key=scores.get)

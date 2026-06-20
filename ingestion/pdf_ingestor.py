@@ -41,6 +41,22 @@ PDF_ACTS = [
         "doc_type": "legislation",
         "source_url": "https://kenyalaw.org/akn/ke/act/2025/17",
         "version_date": "2025-10-21"
+    },
+    {
+        "title": "Anti-Counterfeit Act 2008",
+        "path": "/home/kelly/Documents/sheria-intelligence/data/acts/anti_counterfeit_act_2008.pdf",
+        "domain": "business",
+        "doc_type": "legislation",
+        "source_url": "https://www.aca.go.ke/images/downloads/Anti-Counterfeit-Act-No13-of-2008.pdf",
+        "version_date": "2008-12-24"
+    },
+    {
+        "title": "Penal Code (Cap 63)",
+        "path": "/home/kelly/Documents/sheria-intelligence/data/acts/penal_code_cap63.pdf",
+        "domain": "criminal",
+        "doc_type": "legislation",
+        "source_url": "https://new.kenyalaw.org/akn/ke/act/1930/10/eng@2022-12-31/source.pdf",
+        "version_date": "2022-12-31"
     }
 ]
 
@@ -204,4 +220,3 @@ def ingest_pdfs():
 
 if __name__ == "__main__":
     ingest_pdfs()
-# This will be ignored — we're updating PDF_ACTS directly
