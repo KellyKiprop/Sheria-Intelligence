@@ -2,16 +2,10 @@ fastapi
 uvicorn[standard]
 psycopg2-binary
 python-dotenv
-kafka-python
 groq
 langgraph
 langchain
 langchain-core
 google-genai
-deepeval
-apache-airflow
-pyspark
-beautifulsoup4
-lxml
-requests
 pgvector
+requests
