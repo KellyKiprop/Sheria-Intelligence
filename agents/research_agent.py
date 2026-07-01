@@ -37,6 +37,8 @@ class SheriaState(TypedDict):
     citations: Optional[list[dict]]   # verified sources (Citation fills)
     response: Optional[str]           # final answer (Drafting fills)
     needs_retry: bool                  # Citation sets True if claims fail
+    conversation_history: Optional[list[dict]]  # prior turns: [{"query": str, "response": str}]
+    follow_up_questions: Optional[list[str]]    # suggested next questions (Drafting fills)
 
 # ── Retrieval ────────────────────────────────────────────────
 def get_db_connection():

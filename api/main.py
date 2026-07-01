@@ -40,6 +40,11 @@ app.add_middleware(
 )
 
 # ── Models ────────────────────────────────────────────────────
+class ConversationTurn(BaseModel):
+    query: str
+    response: str
+
+
 class QueryRequest(BaseModel):
     query: str = Field(
         ...,
@@ -52,6 +57,11 @@ class QueryRequest(BaseModel):
         default="public",
         description="'public' for plain language, 'professional' for legal brief",
         example="public"
+    )
+    conversation_history: Optional[list[ConversationTurn]] = Field(
+        default=None,
+        description="Prior turns in this conversation, most recent last. "
+                     "Only the last few are used for context."
     )
 
     class Config:
@@ -79,6 +89,7 @@ class QueryResponse(BaseModel):
     retries: int
     response_time_ms: int
     user_tier: str
+    follow_up_questions: list[str] = []
 
 
 class HealthResponse(BaseModel):
@@ -133,7 +144,7 @@ def get_cached_response(cache_key: str) -> Optional[dict]:
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
-            SELECT response, citations, domain, chunks_retrieved
+            SELECT response, citations, domain, chunks_retrieved, follow_up_questions
             FROM query_cache
             WHERE cache_key = %s AND expires_at > NOW()
         """, (cache_key,))
@@ -145,7 +156,8 @@ def get_cached_response(cache_key: str) -> Optional[dict]:
                 "response": row[0],
                 "citations": row[1],
                 "domain": row[2],
-                "chunks_retrieved": row[3]
+                "chunks_retrieved": row[3],
+                "follow_up_questions": row[4] or []
             }
         return None
     except Exception as e:
@@ -158,13 +170,14 @@ def save_to_cache(cache_key: str, query: str, user_tier: str, result: dict):
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO query_cache (cache_key, query, user_tier, response, citations, domain, chunks_retrieved)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO query_cache (cache_key, query, user_tier, response, citations, domain, chunks_retrieved, follow_up_questions)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (cache_key) DO UPDATE SET
                 response = EXCLUDED.response,
                 citations = EXCLUDED.citations,
                 domain = EXCLUDED.domain,
                 chunks_retrieved = EXCLUDED.chunks_retrieved,
+                follow_up_questions = EXCLUDED.follow_up_questions,
                 created_at = NOW(),
                 expires_at = NOW() + INTERVAL '24 hours'
         """, (
@@ -174,7 +187,8 @@ def save_to_cache(cache_key: str, query: str, user_tier: str, result: dict):
             result.get("response", ""),
             json.dumps(result.get("citations", [])),
             result.get("domain"),
-            len(result.get("chunks", []))
+            len(result.get("chunks", [])),
+            json.dumps(result.get("follow_up_questions") or [])
         ))
         conn.commit()
         cur.close()
@@ -270,8 +284,20 @@ def get_domains():
             {
                 "id": "business",
                 "name": "Business & Company Law",
-                "description": "Company registration, directors, shareholders",
-                "acts": ["Companies Act 2015", "Business Registration Service Act 2015"]
+                "description": "Company registration, directors, shareholders, counterfeiting",
+                "acts": ["Companies Act 2015", "Business Registration Service Act 2015", "Anti-Counterfeit Act 2008"]
+            },
+            {
+                "id": "cybercrime",
+                "name": "Cybercrime Law",
+                "description": "Computer misuse, online fraud, data protection offences",
+                "acts": ["Computer Misuse and Cybercrimes Act 2018", "Computer Misuse and Cybercrimes Amendment Act 2025"]
+            },
+            {
+                "id": "criminal",
+                "name": "Criminal Law",
+                "description": "Criminal offences, penalties, and prosecution",
+                "acts": ["Penal Code (Cap 63)"]
             }
         ]
     }
@@ -287,9 +313,18 @@ def query_legal(request: QueryRequest):
             detail="user_tier must be 'public' or 'professional'"
         )
 
-    # Check cache first
+    history = (
+        [turn.model_dump() for turn in request.conversation_history]
+        if request.conversation_history else []
+    )
+    has_history = len(history) > 0
+
+    # Cache is keyed on query+tier alone, so it can't safely serve
+    # conversation-aware answers — a follow-up like "what about a
+    # first offence" means something different depending on what
+    # came before it. Skip cache entirely once history is present.
     cache_key = get_cache_key(request.query, request.user_tier)
-    cached = get_cached_response(cache_key)
+    cached = None if has_history else get_cached_response(cache_key)
 
     if cached:
         logger.info(f"Cache HIT for key: {cache_key[:8]}...")
@@ -313,14 +348,15 @@ def query_legal(request: QueryRequest):
             chunks_retrieved=cached["chunks_retrieved"],
             retries=0,
             response_time_ms=0,
-            user_tier=request.user_tier
+            user_tier=request.user_tier,
+            follow_up_questions=cached.get("follow_up_questions") or []
         )
 
-    logger.info("Cache MISS — running pipeline")
+    logger.info(f"Cache {'BYPASS (conversation context)' if has_history else 'MISS'} — running pipeline")
     start_time = time.time()
 
     try:
-        result = run_pipeline(request.query, request.user_tier)
+        result = run_pipeline(request.query, request.user_tier, conversation_history=history)
         response_time_ms = int((time.time() - start_time) * 1000)
 
         citations = [
@@ -342,8 +378,9 @@ def query_legal(request: QueryRequest):
 
         logger.info(f"Query completed in {response_time_ms}ms")
 
-        # Save to cache
-        save_to_cache(cache_key, request.query, request.user_tier, result)
+        # Only cache history-free queries — see note above.
+        if not has_history:
+            save_to_cache(cache_key, request.query, request.user_tier, result)
 
         return QueryResponse(
             query=request.query,
@@ -353,7 +390,8 @@ def query_legal(request: QueryRequest):
             chunks_retrieved=len(result.get("chunks", [])),
             retries=result.get("retry_count", 0),
             response_time_ms=response_time_ms,
-            user_tier=request.user_tier
+            user_tier=request.user_tier,
+            follow_up_questions=result.get("follow_up_questions") or []
         )
 
     except Exception as e:

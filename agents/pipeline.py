@@ -124,18 +124,28 @@ def build_pipeline() -> StateGraph:
     return graph.compile()
 
 
-def run_pipeline(query: str, user_tier: str = "public") -> dict:
+def run_pipeline(
+    query: str,
+    user_tier: str = "public",
+    conversation_history: list[dict] | None = None
+) -> dict:
     """
     Main entry point for running the full Sheria pipeline.
 
-    Takes a query and user tier, runs the full agent chain,
-    and returns the final state with response, citations,
-    and metadata.
+    Takes a query, user tier, and optional prior conversation
+    turns, runs the full agent chain, and returns the final
+    state with response, citations, follow-up questions, and
+    metadata.
+
+    conversation_history is only consumed by the Drafting Agent —
+    domain detection and retrieval stay scoped to the current
+    query, since a new question can legitimately shift domain.
     """
     logger.info("=" * 65)
     logger.info("Sheria Intelligence Pipeline — Starting")
     logger.info(f"Query: {query}")
     logger.info(f"Tier:  {user_tier}")
+    logger.info(f"History turns: {len(conversation_history or [])}")
     logger.info("=" * 65)
 
     pipeline = build_pipeline()
@@ -149,7 +159,9 @@ def run_pipeline(query: str, user_tier: str = "public") -> dict:
         "citations": None,
         "response": None,
         "needs_retry": False,
-        "retry_count": 0
+        "retry_count": 0,
+        "conversation_history": conversation_history or [],
+        "follow_up_questions": None
     }
 
     final_state = pipeline.invoke(initial_state)
